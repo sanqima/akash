@@ -81,12 +81,12 @@ func queryApp(t *testing.T, appURL string, limit int) {
 			break
 		}
 	}
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	bytes, err := ioutil.ReadAll(resp.Body)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	assert.Contains(t, string(bytes), "The Future of The Cloud is Decentralized")
 }
 

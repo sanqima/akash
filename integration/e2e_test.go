@@ -5,6 +5,10 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/cosmos/cosmos-sdk/server"
+	bankcli "github.com/cosmos/cosmos-sdk/x/bank/client/testutil"
+	"github.com/ovrclk/akash/x/provider/client/cli"
+	"github.com/ovrclk/akash/x/provider/types"
 	"github.com/stretchr/testify/assert"
 	"io/ioutil"
 	"net/url"
@@ -19,11 +23,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/crypto/hd"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
-	"github.com/cosmos/cosmos-sdk/server"
 	"github.com/cosmos/cosmos-sdk/testutil/network"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	bankcli "github.com/cosmos/cosmos-sdk/x/bank/client/testutil"
-
 	providerCmd "github.com/ovrclk/akash/provider/cmd"
 	ptestutil "github.com/ovrclk/akash/provider/testutil"
 	"github.com/ovrclk/akash/sdl"
@@ -32,8 +33,6 @@ import (
 	dtypes "github.com/ovrclk/akash/x/deployment/types"
 	mcli "github.com/ovrclk/akash/x/market/client/cli"
 	mtypes "github.com/ovrclk/akash/x/market/types"
-	"github.com/ovrclk/akash/x/provider/client/cli"
-	"github.com/ovrclk/akash/x/provider/types"
 )
 
 // IntegrationTestSuite wraps testing components
@@ -42,9 +41,14 @@ type IntegrationTestSuite struct {
 
 	cfg     network.Config
 	network *network.Network
+	validator *network.Validator
+	keyProvider keyring.Info
+	keyTenant keyring.Info
 }
 
 func (s *IntegrationTestSuite) SetupSuite() {
+
+	// Create a network for test
 	cfg := testutil.DefaultConfig()
 	cfg.NumValidators = 1
 	cfg.MinGasPrices = ""
@@ -57,69 +61,25 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	_, _, err = kb.NewMnemonic("keyFoo", keyring.English, sdk.FullFundraiserPath, hd.Secp256k1)
 	s.Require().NoError(err)
 
+	// Wait for the network to start
 	_, err = s.network.WaitForHeight(1)
 	s.Require().NoError(err)
-}
 
-func (s *IntegrationTestSuite) TearDownSuite() {
-	val := s.network.Validators[0]
-	keyTenant, err := val.ClientCtx.Keyring.Key("keyBar")
-	s.Require().NoError(err)
-	resp, err := deploycli.QueryDeploymentsExec(val.ClientCtx.WithOutputFormat("json"))
-	s.Require().NoError(err)
-
-	deployResp := &dtypes.QueryDeploymentsResponse{}
-	err = val.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), deployResp)
-	s.Require().NoError(err)
-	s.Require().Len(deployResp.Deployments, 1, "Deployment Create Failed")
-	deployments := deployResp.Deployments
-
-	// get queried deployment
-	createdDep := deployments[0]
-	// teardown lease
-	_, err = deploycli.TxCloseDeploymentExec(
-		val.ClientCtx,
-		keyTenant.GetAddress(),
-		fmt.Sprintf("--owner=%s", createdDep.Groups[0].GroupID.Owner),
-		fmt.Sprintf("--dseq=%v", createdDep.Deployment.DeploymentID.DSeq),
-		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastBlock),
-		fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, sdk.NewInt(10))).String()),
-		fmt.Sprintf("--gas=%d", flags.DefaultGasLimit),
-	)
-	s.Require().NoError(err)
-	s.Require().NoError(s.waitForBlocksCommitted(3))
-
-	// test query deployments with state filter closed
-	resp, err = deploycli.QueryDeploymentsExec(
-		val.ClientCtx.WithOutputFormat("json"),
-		"--state=closed",
-	)
-	s.Require().NoError(err)
-
-	qResp := &dtypes.QueryDeploymentsResponse{}
-	err = val.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), qResp)
-	s.Require().NoError(err)
-	s.Require().Len(qResp.Deployments, 1, "Deployment Close Failed")
-
-	s.network.Cleanup()
-}
-
-func (s *IntegrationTestSuite) TestE2EApp() {
-	val := s.network.Validators[0]
+	//
+	s.validator = s.network.Validators[0]
 
 	// Send coins value
 	sendTokens := sdk.NewInt64Coin(s.cfg.BondDenom, 1000)
 
 	// Setup a Provider key
-	keyProvider, err := val.ClientCtx.Keyring.Key("keyFoo")
+	s.keyProvider, err = s.validator.ClientCtx.Keyring.Key("keyFoo")
 	s.Require().NoError(err)
 
 	// give provider some coins
 	_, err = bankcli.MsgSendExec(
-		val.ClientCtx,
-		val.Address,
-		keyProvider.GetAddress(),
+		s.validator.ClientCtx,
+		s.validator.Address,
+		s.keyProvider.GetAddress(),
 		sdk.NewCoins(sendTokens),
 		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastBlock),
@@ -130,14 +90,14 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 	s.Require().NoError(s.network.WaitForNextBlock())
 
 	// Set up second tenant key
-	keyTenant, err := val.ClientCtx.Keyring.Key("keyBar")
+	s.keyTenant, err = s.validator.ClientCtx.Keyring.Key("keyBar")
 	s.Require().NoError(err)
 
 	// give tenant some coins too
 	_, err = bankcli.MsgSendExec(
-		val.ClientCtx,
-		val.Address,
-		keyTenant.GetAddress(),
+		s.validator.ClientCtx,
+		s.validator.Address,
+		s.keyTenant.GetAddress(),
 		sdk.NewCoins(sendTokens),
 		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastBlock),
@@ -172,8 +132,8 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 
 	// create Provider blockchain declaration
 	_, err = cli.TxCreateProviderExec(
-		val.ClientCtx,
-		keyProvider.GetAddress(),
+		s.validator.ClientCtx,
+		s.keyProvider.GetAddress(),
 		fmt.Sprintf("%s/%s", s.network.BaseDir, fstat.Name()),
 		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastBlock),
@@ -184,17 +144,17 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 
 	s.Require().NoError(s.network.WaitForNextBlock())
 
-	localCtx := val.ClientCtx.WithOutputFormat("json")
+	localCtx := s.validator.ClientCtx.WithOutputFormat("json")
 	// test query providers
 	resp, err := cli.QueryProvidersExec(localCtx)
 	s.Require().NoError(err)
 
 	out := &types.QueryProvidersResponse{}
-	err = val.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), out)
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), out)
 	s.Require().NoError(err)
 	s.Require().Len(out.Providers, 1, "Provider Creation Failed")
 	providers := out.Providers
-	s.Require().Equal(keyProvider.GetAddress().String(), providers[0].Owner)
+	s.Require().Equal(s.keyProvider.GetAddress().String(), providers[0].Owner)
 
 	// test query provider
 	createdProvider := providers[0]
@@ -202,21 +162,21 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 	s.Require().NoError(err)
 
 	var provider types.Provider
-	err = val.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), &provider)
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), &provider)
 	s.Require().NoError(err)
 	s.Require().Equal(createdProvider, provider)
 
 	// Run Provider service
-	keyName := keyProvider.GetName()
+	keyName := s.keyProvider.GetName()
 
 	// Change the akash home directory for CLI to access the test keyring
-	cliHome := strings.Replace(val.ClientCtx.HomeDir, "simd", "simcli", 1)
+	cliHome := strings.Replace(s.validator.ClientCtx.HomeDir, "simd", "simcli", 1)
 
-	cctx := val.ClientCtx
+	cctx := s.validator.ClientCtx
 	go func() {
 		_, err := ptestutil.RunLocalProvider(cctx,
 			cctx.ChainID,
-			val.RPCAddress,
+			s.validator.RPCAddress,
 			cliHome,
 			keyName,
 			provURL.Host,
@@ -227,15 +187,62 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 
 	s.Require().NoError(s.network.WaitForNextBlock())
 
+
+}
+
+func (s *IntegrationTestSuite) TearDownSuite() {
+	keyTenant, err := s.validator.ClientCtx.Keyring.Key("keyBar")
+	s.Require().NoError(err)
+	resp, err := deploycli.QueryDeploymentsExec(s.validator.ClientCtx.WithOutputFormat("json"))
+	s.Require().NoError(err)
+
+	deployResp := &dtypes.QueryDeploymentsResponse{}
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), deployResp)
+	s.Require().NoError(err)
+	s.Require().Len(deployResp.Deployments, 1, "Deployment Create Failed")
+	deployments := deployResp.Deployments
+
+	// get queried deployment
+	createdDep := deployments[0]
+	// teardown lease
+	_, err = deploycli.TxCloseDeploymentExec(
+		s.validator.ClientCtx,
+		keyTenant.GetAddress(),
+		fmt.Sprintf("--owner=%s", createdDep.Groups[0].GroupID.Owner),
+		fmt.Sprintf("--dseq=%v", createdDep.Deployment.DeploymentID.DSeq),
+		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
+		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastBlock),
+		fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, sdk.NewInt(10))).String()),
+		fmt.Sprintf("--gas=%d", flags.DefaultGasLimit),
+	)
+	s.Require().NoError(err)
+	s.Require().NoError(s.waitForBlocksCommitted(3))
+
+	// test query deployments with state filter closed
+	resp, err = deploycli.QueryDeploymentsExec(
+		s.validator.ClientCtx.WithOutputFormat("json"),
+		"--state=closed",
+	)
+	s.Require().NoError(err)
+
+	qResp := &dtypes.QueryDeploymentsResponse{}
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), qResp)
+	s.Require().NoError(err)
+	s.Require().Len(qResp.Deployments, 1, "Deployment Close Failed")
+
+	s.network.Cleanup()
+}
+
+func (s *IntegrationTestSuite) TestE2EApp() {
 	// create a deployment
 	deploymentPath, err := filepath.Abs("../x/deployment/testdata/deployment-v2.yaml")
 	s.Require().NoError(err)
 
 	// Create Deployments and assert query to assert
-	tenantAddr := keyTenant.GetAddress().String()
+	tenantAddr := s.keyTenant.GetAddress().String()
 	_, err = deploycli.TxCreateDeploymentExec(
-		val.ClientCtx,
-		keyTenant.GetAddress(),
+		s.validator.ClientCtx,
+		s.keyTenant.GetAddress(),
 		deploymentPath,
 		fmt.Sprintf("--%s", flags.FlagSkipConfirmation),
 		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastBlock),
@@ -246,11 +253,11 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 	s.Require().NoError(s.network.WaitForNextBlock())
 
 	// Test query deployments ---------------------------------------------
-	resp, err = deploycli.QueryDeploymentsExec(val.ClientCtx.WithOutputFormat("json"))
+	resp, err := deploycli.QueryDeploymentsExec(s.validator.ClientCtx.WithOutputFormat("json"))
 	s.Require().NoError(err)
 
 	deployResp := &dtypes.QueryDeploymentsResponse{}
-	err = val.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), deployResp)
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), deployResp)
 	s.Require().NoError(err)
 	s.Require().Len(deployResp.Deployments, 1, "Deployment Create Failed")
 	deployments := deployResp.Deployments
@@ -258,35 +265,35 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 
 	// test query deployment
 	createdDep := deployments[0]
-	resp, err = deploycli.QueryDeploymentExec(val.ClientCtx.WithOutputFormat("json"), createdDep.Deployment.DeploymentID)
+	resp, err = deploycli.QueryDeploymentExec(s.validator.ClientCtx.WithOutputFormat("json"), createdDep.Deployment.DeploymentID)
 	s.Require().NoError(err)
 
 	deploymentResp := dtypes.DeploymentResponse{}
-	err = val.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), &deploymentResp)
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), &deploymentResp)
 	s.Require().NoError(err)
 	s.Require().Equal(createdDep, deploymentResp)
 	s.Require().NotEmpty(deploymentResp.Deployment.Version)
 
 	// test query deployments with filters -----------------------------------
 	resp, err = deploycli.QueryDeploymentsExec(
-		val.ClientCtx.WithOutputFormat("json"),
+		s.validator.ClientCtx.WithOutputFormat("json"),
 		fmt.Sprintf("--owner=%s", tenantAddr),
 		fmt.Sprintf("--dseq=%v", createdDep.Deployment.DeploymentID.DSeq),
 	)
 	s.Require().NoError(err, "Error when fetching deployments with owner filter")
 
 	deployResp = &dtypes.QueryDeploymentsResponse{}
-	err = val.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), deployResp)
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), deployResp)
 	s.Require().NoError(err)
 	s.Require().Len(deployResp.Deployments, 1)
 
 	// Assert orders created by provider
 	// test query orders
-	resp, err = mcli.QueryOrdersExec(val.ClientCtx.WithOutputFormat("json"))
+	resp, err = mcli.QueryOrdersExec(s.validator.ClientCtx.WithOutputFormat("json"))
 	s.Require().NoError(err)
 
 	result := &mtypes.QueryOrdersResponse{}
-	err = val.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), result)
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), result)
 	s.Require().NoError(err)
 	s.Require().Len(result.Orders, 1)
 	orders := result.Orders
@@ -296,16 +303,16 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 	s.Require().NoError(s.waitForBlocksCommitted(6))
 
 	// Assert provider made bid and created lease; test query leases ---------
-	resp, err = mcli.QueryLeasesExec(val.ClientCtx.WithOutputFormat("json"))
+	resp, err = mcli.QueryLeasesExec(s.validator.ClientCtx.WithOutputFormat("json"))
 	s.Require().NoError(err)
 
 	leaseRes := &mtypes.QueryLeasesResponse{}
-	err = val.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), leaseRes)
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), leaseRes)
 	s.Require().NoError(err)
 	s.Require().Len(leaseRes.Leases, 1)
 	lease := leaseRes.Leases[0]
 	lid := lease.LeaseID
-	s.Require().Equal(keyProvider.GetAddress().String(), lid.Provider)
+	s.Require().Equal(s.keyProvider.GetAddress().String(), lid.Provider)
 
 	// Send Manifest to Provider ----------------------------------------------
 	bID := mtypes.BidID{
@@ -316,7 +323,7 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 		OSeq:     lid.OSeq,
 	}
 
-	_, err = ptestutil.TestSendManifest(val.ClientCtx.WithOutputFormat("json"), bID, deploymentPath)
+	_, err = ptestutil.TestSendManifest(s.validator.ClientCtx.WithOutputFormat("json"), bID, deploymentPath)
 	s.Require().NoError(err)
 
 	s.Require().NoError(s.waitForBlocksCommitted(20))
@@ -326,7 +333,7 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 	queryApp(s.T(), appURL, 50)
 
 	cmdResult, err := providerCmd.ProviderStatusExec(
-		val.ClientCtx,
+		s.validator.ClientCtx,
 		fmt.Sprintf("--%s=%v", "provider", lid.Provider))
 	assert.NoError(s.T(), err)
 	data := make(map[string]interface{})
@@ -343,7 +350,7 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 	require.NoError(s.T(), err)
 
 	cmdResult, err = providerCmd.ProviderLeaseStatusExec(
-		val.ClientCtx,
+		s.validator.ClientCtx,
 		fmt.Sprintf("--%s=%v", "dseq", lid.DSeq),
 		fmt.Sprintf("--%s=%v", "gseq", lid.GSeq),
 		fmt.Sprintf("--%s=%v", "oseq", lid.OSeq),
@@ -363,7 +370,7 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 	for _, group := range mani.GetGroups() {
 		for _, service := range group.Services {
 			cmdResult, err = providerCmd.ProviderServiceStatusExec(
-				val.ClientCtx,
+				s.validator.ClientCtx,
 				fmt.Sprintf("--%s=%v", "dseq", lid.DSeq),
 				fmt.Sprintf("--%s=%v", "gseq", lid.GSeq),
 				fmt.Sprintf("--%s=%v", "oseq", lid.OSeq),
