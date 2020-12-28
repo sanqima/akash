@@ -13,6 +13,7 @@ import (
 	"github.com/ovrclk/akash/x/provider/types"
 	"github.com/stretchr/testify/assert"
 	"io/ioutil"
+	"os"
 
 	"net"
 	"net/url"
@@ -259,7 +260,73 @@ func newestLease(leases mtypes.Leases) mtypes.Lease {
 	return result
 }
 
-const kubernetesIP = "172.18.8.101" // This is statically specified in the vagrant configuration
+
+
+func getKubernetesIP() string {
+	return os.Getenv("KUBE_NODE_IP")
+}
+
+func (s *IntegrationTestSuite) TestE2EContainerToContainer() {
+	// create a deployment
+	deploymentPath, err := filepath.Abs("../x/deployment/testdata/deployment-v2-c2c.yaml")
+	s.Require().NoError(err)
+
+	// Create Deployments
+	_, err = deploycli.TxCreateDeploymentExec(
+		s.validator.ClientCtx,
+		s.keyTenant.GetAddress(),
+		deploymentPath,
+		fmt.Sprintf("--%s", flags.FlagSkipConfirmation),
+		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastBlock),
+		fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, sdk.NewInt(20))).String()),
+		fmt.Sprintf("--gas=%d", flags.DefaultGasLimit),
+	)
+	s.Require().NoError(err)
+	s.Require().NoError(s.waitForBlocksCommitted(7))
+
+	// Assert provider made bid and created lease; test query leases ---------
+	resp, err := mcli.QueryLeasesExec(s.validator.ClientCtx.WithOutputFormat("json"))
+	s.Require().NoError(err)
+
+	leaseRes := &mtypes.QueryLeasesResponse{}
+	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), leaseRes)
+	s.Require().NoError(err)
+
+	s.Require().Len(leaseRes.Leases, len(s.prevLeases) + 1)
+	s.prevLeases = leaseRes.Leases
+
+	lease := newestLease(leaseRes.Leases)
+	lid := lease.LeaseID
+	s.Require().Equal(s.keyProvider.GetAddress().String(), lid.Provider)
+
+	// Send Manifest to Provider ----------------------------------------------
+	bID := mtypes.BidID{
+		Provider: lid.Provider,
+		Owner:    lid.Owner,
+		DSeq:     lid.DSeq,
+		GSeq:     lid.GSeq,
+		OSeq:     lid.OSeq,
+	}
+
+	_, err = ptestutil.TestSendManifest(s.validator.ClientCtx.WithOutputFormat("json"), bID, deploymentPath)
+	s.Require().NoError(err)
+	s.Require().NoError(s.waitForBlocksCommitted(2))
+
+	appURL := fmt.Sprintf("http://%s:%s/SET/foo/bar", s.appHost, s.appPort)
+
+	const testHost = "webdistest.localhost"
+	const attempts = 30
+	httpResp := queryAppWithRetries(s.T(), appURL, testHost, attempts)
+	bodyData, err := ioutil.ReadAll(httpResp.Body)
+	s.Require().NoError(err)
+	s.Require().Equal(`{"SET":[true,"OK"]}`, string(bodyData))
+
+	appURL = fmt.Sprintf("http://%s:%s/GET/foo", s.appHost, s.appPort)
+	httpResp = queryAppWithRetries(s.T(), appURL, testHost, attempts)
+	bodyData, err = ioutil.ReadAll(httpResp.Body)
+	s.Require().NoError(err)
+	s.Require().Equal(`{"GET":"bar"}`, string(bodyData))
+}
 
 func (s *IntegrationTestSuite) TestE2EAppNodePort() {
 	// create a deployment
@@ -267,7 +334,6 @@ func (s *IntegrationTestSuite) TestE2EAppNodePort() {
 	s.Require().NoError(err)
 
 	// Create Deployments
-	//tenantAddr := s.keyTenant.GetAddress().String()
 	_, err = deploycli.TxCreateDeploymentExec(
 		s.validator.ClientCtx,
 		s.keyTenant.GetAddress(),
@@ -336,26 +402,31 @@ func (s *IntegrationTestSuite) TestE2EAppNodePort() {
 	var recvData []byte
 	var connErr error
 	var conn net.Conn
-	// TODO - only dial when VAGRANT_CONFIG is set
-	for attempts := 0; attempts != maxAttempts; attempts++ {
-		fmt.Printf("Dialing %s:%d\n", kubernetesIP, forwardedPort)
-		conn, connErr = net.DialTimeout("tcp", fmt.Sprintf("%s:%d", kubernetesIP, forwardedPort), 2 * time.Second)
-		if connErr != nil {
-			time.Sleep(time.Duration(1500) * time.Millisecond)
-			continue
+
+	kubernetesIP := getKubernetesIP()
+	if len(kubernetesIP) != 0 {
+		for attempts := 0; attempts != maxAttempts; attempts++ {
+			// Connect with a timeout so the test doesn't get stuck here
+			conn, connErr = net.DialTimeout("tcp", fmt.Sprintf("%s:%d", kubernetesIP, forwardedPort), 2*time.Second)
+			// If an error, just wait and try again
+			if connErr != nil {
+				time.Sleep(time.Duration(500) * time.Millisecond)
+				continue
+			}
+			break
 		}
-		break
+
+		// check that a connection was created without any error
+		s.Require().NoError(connErr)
+		// Read everything with a timeout
+		err = conn.SetReadDeadline(time.Now().Add(time.Duration(10) * time.Second))
+		s.Require().NoError(err)
+		recvData, err = ioutil.ReadAll(conn)
+		s.Require().NoError(err)
+		s.Require().NoError(conn.Close())
+
+		s.Require().Regexp("^.*hello world(?s:.)*$", string(recvData))
 	}
-
-	s.Require().NoError(connErr)
-	// Read everything
-	err = conn.SetReadDeadline(time.Now().Add(time.Duration(10) * time.Second))
-	s.Require().NoError(err)
-	recvData, err = ioutil.ReadAll(conn)
-	s.Require().NoError(err)
-	s.Require().NoError(conn.Close())
-
-	s.Require().Regexp("^.*hello world(?s:.)*$", string(recvData))
 }
 
 func (s *IntegrationTestSuite) TestE2EApp() {
@@ -452,7 +523,6 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 	_, err = ptestutil.TestSendManifest(s.validator.ClientCtx.WithOutputFormat("json"), bID, deploymentPath)
 	s.Require().NoError(err)
 	s.Require().NoError(s.waitForBlocksCommitted(20))
-
 
 	appURL := fmt.Sprintf("http://%s:%s/", s.appHost, s.appPort)
 	queryApp(s.T(), appURL, 50)

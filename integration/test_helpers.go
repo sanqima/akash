@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"net"
 )
 
 const (
@@ -49,6 +50,41 @@ func addFlags(cmd string, flags []string) string {
 	}
 
 	return strings.TrimSpace(cmd)
+}
+
+func queryAppWithRetries(t *testing.T, appURL string, appHost string, limit int) *http.Response {
+	req, err := http.NewRequest("GET", appURL, nil)
+	require.NoError(t, err)
+	req.Host = appHost
+	req.Header.Add("Cache-Control", "no-cache")
+	req.Header.Add("Connection", "keep-alive")
+	tr := &http.Transport{
+		DisableKeepAlives: false,
+		DialContext: (&net.Dialer{
+			Timeout:   1 * time.Second,
+			KeepAlive: 1 * time.Second,
+			DualStack: false,
+		}).DialContext,
+	}
+	client := &http.Client{
+		Transport: tr,
+	}
+
+	var resp *http.Response
+	for i := 0; i != limit; i++ {
+		resp, err = client.Do(req)
+		if err != nil {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if resp != nil && resp.StatusCode == http.StatusOK {
+			err = nil
+			break
+		}
+	}
+	assert.NoError(t, err)
+
+	return resp
 }
 
 // Assert provider launches app in kind cluster
