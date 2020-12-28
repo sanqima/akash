@@ -7,12 +7,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
 	"time"
-	"net"
 )
 
 const (
@@ -72,6 +72,7 @@ func queryAppWithRetries(t *testing.T, appURL string, appHost string, limit int)
 
 	var resp *http.Response
 	for i := 0; i != limit; i++ {
+		t.Log("GET: ", appURL)
 		resp, err = client.Do(req)
 		if err != nil {
 			time.Sleep(1 * time.Second)

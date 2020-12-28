@@ -79,7 +79,7 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	s.validator = s.network.Validators[0]
 
 	// Send coins value
-	sendTokens := sdk.NewInt64Coin(s.cfg.BondDenom, 99999)
+	sendTokens := sdk.NewInt64Coin(s.cfg.BondDenom, 9999999)
 
 	// Setup a Provider key
 	s.keyProvider, err = s.validator.ClientCtx.Keyring.Key("keyFoo")
@@ -315,7 +315,7 @@ func (s *IntegrationTestSuite) TestE2EContainerToContainer() {
 	appURL := fmt.Sprintf("http://%s:%s/SET/foo/bar", s.appHost, s.appPort)
 
 	const testHost = "webdistest.localhost"
-	const attempts = 30
+	const attempts = 15
 	httpResp := queryAppWithRetries(s.T(), appURL, testHost, attempts)
 	bodyData, err := ioutil.ReadAll(httpResp.Body)
 	s.Require().NoError(err)
@@ -398,7 +398,7 @@ func (s *IntegrationTestSuite) TestE2EAppNodePort() {
 	}
 	s.Require().NotEqual(uint16(0), forwardedPort)
 
-	const maxAttempts = 30
+	const maxAttempts = 60
 	var recvData []byte
 	var connErr error
 	var conn net.Conn
