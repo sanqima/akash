@@ -315,7 +315,7 @@ func (s *IntegrationTestSuite) TestE2EContainerToContainer() {
 	appURL := fmt.Sprintf("http://%s:%s/SET/foo/bar", s.appHost, s.appPort)
 
 	const testHost = "webdistest.localhost"
-	const attempts = 15
+	const attempts = 120
 	httpResp := queryAppWithRetries(s.T(), appURL, testHost, attempts)
 	bodyData, err := ioutil.ReadAll(httpResp.Body)
 	s.Require().NoError(err)

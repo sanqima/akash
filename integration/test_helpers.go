@@ -72,14 +72,15 @@ func queryAppWithRetries(t *testing.T, appURL string, appHost string, limit int)
 
 	var resp *http.Response
 	for i := 0; i != limit; i++ {
-		t.Log("GET: ", appURL)
 		resp, err = client.Do(req)
+		if resp != nil {
+			t.Log("GET: ", appURL, resp.StatusCode)
+		}
 		if err != nil {
 			time.Sleep(1 * time.Second)
 			continue
 		}
 		if resp != nil && resp.StatusCode == http.StatusOK {
-			err = nil
 			break
 		}
 	}
