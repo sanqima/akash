@@ -3,7 +3,6 @@
 package integration
 
 import (
-
 	"encoding/json"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/server"
@@ -44,12 +43,12 @@ import (
 type IntegrationTestSuite struct {
 	suite.Suite
 
-	cfg     network.Config
-	network *network.Network
-	validator *network.Validator
+	cfg         network.Config
+	network     *network.Network
+	validator   *network.Validator
 	keyProvider keyring.Info
-	keyTenant keyring.Info
-	prevLeases mtypes.Leases
+	keyTenant   keyring.Info
+	prevLeases  mtypes.Leases
 
 	appHost string
 	appPort string
@@ -239,7 +238,7 @@ func (s *IntegrationTestSuite) TearDownSuite() {
 	qResp := &dtypes.QueryDeploymentsResponse{}
 	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), qResp)
 	s.Require().NoError(err)
-	s.Require().True(len(qResp.Deployments) == len(deployResp.Deployments),  "Deployment Close Failed")
+	s.Require().True(len(qResp.Deployments) == len(deployResp.Deployments), "Deployment Close Failed")
 
 	s.network.Cleanup()
 }
@@ -249,18 +248,16 @@ func newestLease(leases mtypes.Leases) mtypes.Lease {
 	assigned := false
 
 	for _, lease := range leases {
-		if ! assigned {
+		if !assigned {
 			result = lease
 			assigned = true
-		} else if (result.GetLeaseID().DSeq < lease.GetLeaseID().DSeq) {
+		} else if result.GetLeaseID().DSeq < lease.GetLeaseID().DSeq {
 			result = lease
 		}
 	}
 
 	return result
 }
-
-
 
 func getKubernetesIP() string {
 	return os.Getenv("KUBE_NODE_IP")
@@ -292,7 +289,7 @@ func (s *IntegrationTestSuite) TestE2EContainerToContainer() {
 	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), leaseRes)
 	s.Require().NoError(err)
 
-	s.Require().Len(leaseRes.Leases, len(s.prevLeases) + 1)
+	s.Require().Len(leaseRes.Leases, len(s.prevLeases)+1)
 	s.prevLeases = leaseRes.Leases
 
 	lease := newestLease(leaseRes.Leases)
@@ -354,7 +351,7 @@ func (s *IntegrationTestSuite) TestE2EAppNodePort() {
 	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), leaseRes)
 	s.Require().NoError(err)
 
-	s.Require().Len(leaseRes.Leases, len(s.prevLeases) + 1)
+	s.Require().Len(leaseRes.Leases, len(s.prevLeases)+1)
 	s.prevLeases = leaseRes.Leases
 
 	lease := newestLease(leaseRes.Leases)
@@ -374,7 +371,6 @@ func (s *IntegrationTestSuite) TestE2EAppNodePort() {
 	s.Require().NoError(err)
 	s.Require().NoError(s.waitForBlocksCommitted(2))
 
-
 	// Get the lease status
 	cmdResult, err := providerCmd.ProviderLeaseStatusExec(
 		s.validator.ClientCtx,
@@ -389,7 +385,7 @@ func (s *IntegrationTestSuite) TestE2EAppNodePort() {
 	assert.NoError(s.T(), err)
 
 	forwardedPort := uint16(0)
-	portLoop:
+portLoop:
 	for _, entry := range data.ForwardedPorts {
 		for _, port := range entry {
 			forwardedPort = port.ExternalPort
@@ -505,7 +501,7 @@ func (s *IntegrationTestSuite) TestE2EApp() {
 	leaseRes := &mtypes.QueryLeasesResponse{}
 	err = s.validator.ClientCtx.JSONMarshaler.UnmarshalJSON(resp.Bytes(), leaseRes)
 	s.Require().NoError(err)
-	s.Require().Len(leaseRes.Leases, len(s.prevLeases) + 1)
+	s.Require().Len(leaseRes.Leases, len(s.prevLeases)+1)
 	s.prevLeases = leaseRes.Leases
 	lease := newestLease(leaseRes.Leases)
 	lid := lease.LeaseID
