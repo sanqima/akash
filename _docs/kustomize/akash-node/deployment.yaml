@@ -98,12 +98,6 @@ spec:
                   name: akash-config
                   key: db_dir
 
-            - name: AKASH_LOG_LEVEL
-              valueFrom:
-                configMapKeyRef:
-                  name: akash-config
-                  key: log_level
-
             - name: AKASH_LOG_FORMAT
               valueFrom:
                 configMapKeyRef:

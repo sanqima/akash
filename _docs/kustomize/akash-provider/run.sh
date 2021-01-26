@@ -15,6 +15,10 @@ set -e
 env | sort
 
 ##
+# Import certificate
+##
+
+##
 # Import key
 ##
 /bin/akash --home="$AKASH_HOME" keys import --keyring-backend="$AKASH_KEYRING_BACKEND"  "$AKASH_FROM" \
@@ -25,3 +29,4 @@ env | sort
 ##
 #/akash --home=$AKASH_HOME provider run --cluster-k8s
 /bin/akash --home="$AKASH_HOME" --node="$AKASH_NODE" --chain-id="$AKASH_CHAIN_ID" --keyring-backend="$AKASH_KEYRING_BACKEND" --from="$AKASH_FROM" provider run --cluster-k8s
+s
